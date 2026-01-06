@@ -3,12 +3,12 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import Papa from 'papaparse';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, 
-  PieChart, Pie, Cell, AreaChart, Area 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, 
+  PieChart, Pie, Cell, AreaChart, Area, Legend 
 } from 'recharts';
 import { 
   ArrowUpRight, ArrowDownRight, Wallet, TrendingUp, ShoppingBag, 
-  AlertCircle, Calendar, Coins, Calculator, Info, Smartphone, Table2, Receipt 
+  AlertCircle, Calendar, Coins, Calculator, Info, Smartphone, Banknote, Store, PieChart as PieIcon 
 } from 'lucide-react';
 import { 
   format, startOfMonth, endOfMonth, isWithinInterval, parse, 
@@ -21,51 +21,44 @@ const URL_OMSET = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTWtMR7ARzvb7
 const URL_BIAYA = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTWtMR7ARzvb7uoojhGE1o3wWWoFk1nOZ7bqy7ebS5Hv3H7DS5lIt4dtNaW_hvBMlu116i6EuzHlIpN/pub?gid=1688819356&single=true&output=csv"; 
 const URL_MODAL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTWtMR7ARzvb7uoojhGE1o3wWWoFk1nOZ7bqy7ebS5Hv3H7DS5lIt4dtNaW_hvBMlu116i6EuzHlIpN/pub?gid=850061034&single=true&output=csv"; 
 
-// --- Tipe Data ---
-interface DataOmset {
-  Tanggal: string;
-  Channel_Penjualan: string;
-  Nominal_Omset: string;
-}
-
-interface DataBiaya {
-  Tanggal: string;
-  Kategori_Biaya: string;
-  Nominal_Biaya: string;
-}
-
-interface DataModal {
-  Tanggal: string;
-  Keterangan: string;
-  Nominal_Modal: string;
-}
-
-// Warna Chart
+// --- Warna Chart ---
 const COLOR_ONLINE = '#6366F1'; 
 const COLOR_OFFLINE = '#F97316';
-const COLORS_COST = ['#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#8B5CF6'];
+const COLORS_CHART = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
 export default function Dashboard() {
-  const [rawOmset, setRawOmset] = useState<DataOmset[]>([]);
-  const [rawBiaya, setRawBiaya] = useState<DataBiaya[]>([]);
-  const [rawModal, setRawModal] = useState<DataModal[]>([]);
+  const [rawOmset, setRawOmset] = useState<any[]>([]);
+  const [rawBiaya, setRawBiaya] = useState<any[]>([]);
+  const [rawModal, setRawModal] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Default: 6 Bulan Terakhir
   const [startDate, setStartDate] = useState<Date>(subMonths(new Date(), 6)); 
   const [endDate, setEndDate] = useState<Date>(endOfDay(new Date()));
   const [selectedMonth, setSelectedMonth] = useState<string>(""); 
 
-  // --- Helper Functions ---
-  const parseDate = (dateStr: string, formatStr: string) => {
-    if (!dateStr) return new Date();
+  // --- Helpers ---
+  const normalizeKeys = (data: any[]) => {
+    return data.map(item => {
+      const newItem: any = {};
+      Object.keys(item).forEach(key => {
+        const cleanKey = key.trim().toLowerCase().replace(/\s+/g, '_');
+        newItem[cleanKey] = item[key];
+      });
+      return newItem;
+    });
+  };
+
+  const parseDate = (dateStr: string) => {
+    if (!dateStr || typeof dateStr !== 'string') return null;
     try {
-      const parsed = parse(dateStr, formatStr, new Date());
+      let parsed = parse(dateStr, 'dd/MM/yyyy', new Date());
       if (!isNaN(parsed.getTime())) return parsed;
-      const parsedMachine = new Date(dateStr);
-      if (!isNaN(parsedMachine.getTime())) return parsedMachine;
-      return new Date(); 
-    } catch { return new Date(); }
+      parsed = parse(dateStr, 'M/d/yyyy', new Date());
+      if (!isNaN(parsed.getTime())) return parsed;
+      parsed = new Date(dateStr);
+      if (!isNaN(parsed.getTime())) return parsed;
+      return null;
+    } catch { return null; }
   };
 
   const parseRupiah = (val: string) => {
@@ -81,7 +74,7 @@ export default function Dashboard() {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(num);
   };
 
-  // --- 1. Fetch Data ---
+  // --- Fetch Data ---
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -93,9 +86,10 @@ export default function Dashboard() {
         const textBiaya = await resBiaya.text();
         const textModal = await resModal.text();
         
-        setRawOmset(Papa.parse(textOmset, { header: true, skipEmptyLines: true }).data as DataOmset[]);
-        setRawBiaya(Papa.parse(textBiaya, { header: true, skipEmptyLines: true }).data as DataBiaya[]);
-        setRawModal(Papa.parse(textModal, { header: true, skipEmptyLines: true }).data as DataModal[]);
+        setRawOmset(normalizeKeys(Papa.parse(textOmset, { header: true, skipEmptyLines: true }).data));
+        setRawBiaya(normalizeKeys(Papa.parse(textBiaya, { header: true, skipEmptyLines: true }).data));
+        setRawModal(normalizeKeys(Papa.parse(textModal, { header: true, skipEmptyLines: true }).data));
+        
         setLoading(false);
       } catch (error) {
         console.error("Error fetching data:", error);
@@ -105,112 +99,148 @@ export default function Dashboard() {
     fetchData();
   }, []);
 
-  // --- 2. Filter & Process Data (Utama) ---
-  const data = useMemo(() => {
-    // 1. Filter Tanggal
-    const omsetFiltered = rawOmset.filter(item => {
-      if (!item.Tanggal) return false;
-      const d = parseDate(item.Tanggal, 'dd/MM/yyyy'); 
+  // --- 2. LOGIC FILTER PERIODE (Untuk Scorecard & Laporan Periode Ini) ---
+  const periodData = useMemo(() => {
+    // A. Filter Tanggal
+    const checkFilter = (tgl: string) => {
+      const d = parseDate(tgl);
+      if (!d) return false;
       return isWithinInterval(d, { start: startOfDay(startDate), end: endOfDay(endDate) });
-    });
+    };
 
-    const biayaFiltered = rawBiaya.filter(item => {
-      if (!item.Tanggal) return false;
-      const d = parseDate(item.Tanggal, 'M/d/yyyy'); 
-      return isWithinInterval(d, { start: startOfDay(startDate), end: endOfDay(endDate) });
-    });
+    const omsetFiltered = rawOmset.filter(item => checkFilter(item.tanggal));
+    const biayaFiltered = rawBiaya.filter(item => checkFilter(item.tanggal));
+    const modalFiltered = rawModal.filter(item => checkFilter(item.tanggal));
 
-    // 2. Hitung Omset
-    let totalOmset = 0;
-    let omsetOffline = 0;
+    // B. Hitung Omset (P&L & Cashflow)
+    let revenue = 0;
     let omsetOnline = 0;
+    let omsetOffline = 0;
     omsetFiltered.forEach(item => {
-      const val = parseRupiah(item.Nominal_Omset);
-      totalOmset += val;
-      const channel = item.Channel_Penjualan?.toLowerCase() || '';
-      if (channel.includes('offline') || channel.includes('kedai')) omsetOffline += val;
+      const val = parseRupiah(item.nominal_omset);
+      revenue += val;
+      const ch = (item.channel_penjualan || '').toLowerCase();
+      if (ch.includes('offline') || ch.includes('kedai')) omsetOffline += val;
       else omsetOnline += val;
     });
 
-    // 3. Hitung Biaya & Split (CAPEX vs OPEX)
-    let grandTotalBiaya = 0;
-    let totalCapex = 0; 
-    let totalOpex = 0;
+    // C. Logic Biaya (Pemisahan P&L vs Cashflow)
+    // P&L Variables
+    let pl_hpp = 0;
+    let pl_opex = 0;
+    
+    // Cashflow Variables
+    let cf_capex = 0;
+    let cf_opex = 0; // Opex versi cashflow (semua yg bukan capex)
 
-    const capexDetails: Record<string, number> = {};
-    const opexDetails: Record<string, number> = {};
+    // Chart Data Arrays
+    const capexChartData: any = {};
+    const opexChartData: any = {};
 
     biayaFiltered.forEach(item => {
-      const val = parseRupiah(item.Nominal_Biaya);
-      const kat = item.Kategori_Biaya || 'Umum';
+      const val = parseRupiah(item.nominal_biaya);
+      const kat = (item.kategori_biaya || '').trim();
       const katLower = kat.toLowerCase();
 
-      grandTotalBiaya += val;
+      // --- LOGIC 1: P&L (Laba Rugi) ---
+      // HPP: Bahan Baku & Modal Bahan Baku
+      if (katLower === 'bahan baku' || katLower === 'modal bahan baku') {
+        pl_hpp += val;
+      }
+      // OPEX P&L: Operasional, Marketing, Gaji, R&D
+      else if (['operasional', 'marketing', 'gaji', 'r&d'].includes(katLower)) {
+        pl_opex += val;
+      }
+      // Note: 'Modal Operasional' tidak masuk P&L (karena Capex)
 
-      if (katLower.includes('modal')) {
-        totalCapex += val;
-        capexDetails[kat] = (capexDetails[kat] || 0) + val;
+      // --- LOGIC 2: CASHFLOW (Arus Kas) ---
+      // CAPEX: Modal Operasional & Modal Bahan Baku
+      if (katLower === 'modal operasional' || katLower === 'modal bahan baku') {
+        cf_capex += val;
+        // Collect chart data
+        capexChartData[kat] = (capexChartData[kat] || 0) + val;
       } else {
-        totalOpex += val;
-        opexDetails[kat] = (opexDetails[kat] || 0) + val;
+        // OPEX CF: Semua yg bukan Capex
+        cf_opex += val;
+        // Collect chart data
+        opexChartData[kat] = (opexChartData[kat] || 0) + val;
       }
     });
 
-    // 4. Hitung Profit
-    const profitOperasional = totalOmset - totalOpex;
+    const grossProfit = revenue - pl_hpp;
+    const netProfit = grossProfit - pl_opex;
 
-    // 5. Data Trend
+    // --- LOGIC 3: CASHFLOW SUM ---
+    let totalModalIn = 0;
+    modalFiltered.forEach(item => totalModalIn += parseRupiah(item.nominal_modal));
+    
+    const cashIn = revenue + totalModalIn;
+    const cashOut = cf_capex + cf_opex;
+    const netCashflow = cashIn - cashOut;
+
+    // --- LOGIC 4: CHARTS ---
+    // Trend Omset
     const diffDays = differenceInDays(endDate, startDate);
     const isMonthlyView = diffDays > 60; 
     const trendMap = omsetFiltered.reduce((acc: any, curr) => {
-      const d = parseDate(curr.Tanggal, 'dd/MM/yyyy');
+      const d = parseDate(curr.tanggal);
+      if(!d) return acc;
       const key = isMonthlyView ? format(d, 'MMM yyyy', { locale: id }) : format(d, 'dd MMM', { locale: id });
       const sortKey = isMonthlyView ? startOfMonth(d).getTime() : startOfDay(d).getTime();
       if (!acc[sortKey]) { acc[sortKey] = { name: key, value: 0, sortKey }; }
-      acc[sortKey].value += parseRupiah(curr.Nominal_Omset);
+      acc[sortKey].value += parseRupiah(curr.nominal_omset);
       return acc;
     }, {});
     const trendSeries = Object.values(trendMap).sort((a: any, b: any) => a.sortKey - b.sortKey);
 
+    // Capex & Opex Composition
+    const capexSeries = Object.keys(capexChartData).map(k => ({ name: k, value: capexChartData[k] }));
+    const opexSeries = Object.keys(opexChartData).map(k => ({ name: k, value: opexChartData[k] }));
+
     return {
-      totalOmset, omsetOffline, omsetOnline,
-      grandTotalBiaya, totalCapex, totalOpex,
-      capexDetails, opexDetails,
-      profitOperasional, trendSeries, isMonthlyView
+      revenue, omsetOnline, omsetOffline,
+      pl_hpp, pl_opex, grossProfit, netProfit,
+      totalModalIn, cashIn, cashOut, cf_capex, cf_opex, netCashflow,
+      trendSeries, capexSeries, opexSeries, isMonthlyView
     };
-  }, [rawOmset, rawBiaya, startDate, endDate]);
+  }, [rawOmset, rawBiaya, rawModal, startDate, endDate]);
 
-  // --- 3. Hitung BEP (Lifetime Data) ---
-  const bepData = useMemo(() => {
-    const totalModalDisetor = rawModal.reduce((acc, curr) => acc + parseRupiah(curr.Nominal_Modal), 0);
-    
-    const lifetimeOmset = rawOmset.reduce((acc, curr) => acc + parseRupiah(curr.Nominal_Omset), 0);
-    
-    // Hitung Lifetime OPEX dan CAPEX
-    let lifetimeOpex = 0;
-    let lifetimeGrandTotalBiaya = 0; // Total Uang Keluar (Semua)
 
-    rawBiaya.forEach((curr) => {
-      const val = parseRupiah(curr.Nominal_Biaya);
-      lifetimeGrandTotalBiaya += val; // Semua masuk sini
-      if (!curr.Kategori_Biaya?.toLowerCase().includes('modal')) {
-        lifetimeOpex += val; // Hanya non-modal masuk OPEX
+  // --- 3. LOGIC LIFETIME (Untuk BEP / Balik Modal) ---
+  // Tidak terpengaruh filter tanggal
+  const lifetimeData = useMemo(() => {
+    let totalModal = 0;
+    rawModal.forEach(item => totalModal += parseRupiah(item.nominal_modal));
+
+    let totalRevenue = 0;
+    rawOmset.forEach(item => totalRevenue += parseRupiah(item.nominal_omset));
+
+    let totalHPP = 0;
+    let totalOpex = 0;
+
+    rawBiaya.forEach(item => {
+      const val = parseRupiah(item.nominal_biaya);
+      const kat = (item.kategori_biaya || '').trim().toLowerCase();
+
+      // Logic P&L yang sama diterapkan ke data lifetime
+      if (kat === 'bahan baku' || kat === 'modal bahan baku') {
+        totalHPP += val;
+      }
+      else if (['operasional', 'marketing', 'gaji', 'r&d'].includes(kat)) {
+        totalOpex += val;
       }
     });
 
-    const lifetimeProfitOps = lifetimeOmset - lifetimeOpex;
-    const sisaModalBelumKembali = totalModalDisetor - lifetimeProfitOps;
-    const persentaseBalikModal = totalModalDisetor > 0 ? (lifetimeProfitOps / totalModalDisetor) * 100 : 0;
+    const lifetimeNetProfit = totalRevenue - totalHPP - totalOpex;
+    const sisaModal = totalModal - lifetimeNetProfit;
+    const isBEP = lifetimeNetProfit >= totalModal;
+    const progressBEP = totalModal > 0 ? (lifetimeNetProfit / totalModal) * 100 : 0;
 
-    return { 
-      totalModalDisetor, 
-      lifetimeOmset, lifetimeOpex, lifetimeProfitOps, 
-      lifetimeGrandTotalBiaya, // <-- VARIABLE BARU BUAT CROSSCHECK
-      sisaModalBelumKembali, persentaseBalikModal 
-    };
+    return { totalModal, lifetimeNetProfit, sisaModal, isBEP, progressBEP };
   }, [rawOmset, rawBiaya, rawModal]);
 
-  // --- 4. Misc Handlers ---
+
+  // --- Handlers ---
   const handleMonthChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
     setSelectedMonth(val);
@@ -221,12 +251,12 @@ export default function Dashboard() {
       setEndDate(endOfMonth(newStart));
     }
   };
-  const monthOptions = eachMonthOfInterval({ start: new Date(2025, 5, 1), end: new Date() });
+  const monthOptions = eachMonthOfInterval({ start: new Date(2025, 0, 1), end: new Date() });
 
   if (loading) return <div className="flex h-screen items-center justify-center text-gray-500 animate-pulse">Memuat Data Rengganis...</div>;
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4 md:p-8 font-sans">
+    <main className="min-h-screen bg-gray-50 p-4 md:p-8 font-sans text-slate-800">
       <div className="max-w-7xl mx-auto space-y-8">
         
         {/* HEADER & FILTER */}
@@ -240,239 +270,263 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <div className="relative">
-              <select value={selectedMonth} onChange={handleMonthChange} className="appearance-none bg-gray-50 border border-gray-200 text-gray-700 py-2 pl-4 pr-8 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
-                <option value="">Pilih Bulan...</option>
-                {monthOptions.map((date) => (<option key={date.toString()} value={format(date, 'yyyy-MM')}>{format(date, 'MMMM yyyy', { locale: id })}</option>))}
-              </select>
-              <Calendar className="absolute right-3 top-2.5 text-gray-400 w-4 h-4 pointer-events-none" />
-            </div>
-            <span className="text-gray-300">|</span>
+            <select value={selectedMonth} onChange={handleMonthChange} className="bg-gray-50 border border-gray-200 text-sm py-2 px-4 rounded-lg">
+              <option value="">Pilih Bulan...</option>
+              {monthOptions.map((date) => (<option key={date.toString()} value={format(date, 'yyyy-MM')}>{format(date, 'MMMM yyyy', { locale: id })}</option>))}
+            </select>
             <div className="flex items-center gap-2 bg-gray-50 p-1 px-3 rounded-lg border border-gray-200">
-              <span className="text-xs text-gray-400">Dari:</span>
-              <input type="date" value={format(startDate, 'yyyy-MM-dd')} onChange={(e) => { setStartDate(new Date(e.target.value)); setSelectedMonth(""); }} className="bg-transparent text-sm text-gray-700 focus:outline-none" />
-              <span className="text-xs text-gray-400 ml-2">Sampai:</span>
-              <input type="date" value={format(endDate, 'yyyy-MM-dd')} onChange={(e) => { setEndDate(new Date(e.target.value)); setSelectedMonth(""); }} className="bg-transparent text-sm text-gray-700 focus:outline-none" />
+              <input type="date" value={format(startDate, 'yyyy-MM-dd')} onChange={(e) => { setStartDate(new Date(e.target.value)); setSelectedMonth(""); }} className="bg-transparent text-sm focus:outline-none" />
+              <span className="text-xs text-gray-400">-</span>
+              <input type="date" value={format(endDate, 'yyyy-MM-dd')} onChange={(e) => { setEndDate(new Date(e.target.value)); setSelectedMonth(""); }} className="bg-transparent text-sm focus:outline-none" />
             </div>
           </div>
         </div>
 
-        {/* --- SECTION 1: FINANCIAL HIGHLIGHTS --- */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 relative overflow-hidden group">
-            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity"><TrendingUp size={48} className="text-blue-600"/></div>
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Total Omset (Gross)</p>
-            <h3 className="text-2xl font-bold text-gray-800">{formatIDR(data.totalOmset)}</h3>
-            <p className="text-[10px] text-gray-400 mt-2">Pemasukan Kotor (Periode Terpilih)</p>
-          </div>
-
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 relative overflow-hidden group">
-            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity"><Wallet size={48} className="text-red-600"/></div>
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Total Uang Keluar</p>
-            <h3 className="text-2xl font-bold text-gray-800">{formatIDR(data.grandTotalBiaya)}</h3>
-            <p className="text-[10px] text-gray-400 mt-2">Belanja Modal + Operasional (Sesuai Filter)</p>
-          </div>
-
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-blue-100 bg-blue-50/50 relative overflow-hidden group">
-            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity"><AlertCircle size={48} className="text-blue-600"/></div>
-            <p className="text-xs font-semibold text-blue-500 uppercase tracking-wider mb-1">Biaya Operasional (OPEX)</p>
-            <h3 className="text-2xl font-bold text-blue-700">{formatIDR(data.totalOpex)}</h3>
-            <p className="text-[10px] text-blue-400 mt-2">Biaya Rutin (Sesuai Filter)</p>
-          </div>
-
-          <div className="bg-gradient-to-br from-green-500 to-emerald-600 p-6 rounded-xl shadow-lg text-white relative overflow-hidden">
-             <div className="absolute top-0 right-0 p-3 opacity-20"><Coins size={48} className="text-white"/></div>
-            <p className="text-xs font-semibold text-green-100 uppercase tracking-wider mb-1">Profit Operasional</p>
-            <h3 className="text-2xl font-bold">{formatIDR(data.profitOperasional)}</h3>
-            <p className="text-[10px] text-green-100 mt-2 flex items-center gap-1">
-              <Calculator size={10}/> Rumus: Omset - OPEX (Periode Ini)
-            </p>
-          </div>
-        </div>
-
-        {/* --- SECTION 2: BREAKDOWN PENGELUARAN --- */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
-            <h3 className="font-bold text-gray-700 flex items-center gap-2">
-              <Calculator size={18} className="text-gray-400"/> Struktur Biaya (Cost Breakdown)
-            </h3>
-            <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded">Grand Total: {formatIDR(data.grandTotalBiaya)}</span>
+        {/* --- BAGIAN 1: LAPORAN LABA RUGI (P&L) --- */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="p-1.5 bg-blue-600 rounded text-white"><Calculator size={16}/></div>
+            <h2 className="text-lg font-bold text-gray-800">Laporan Laba Rugi (Profit & Loss)</h2>
           </div>
           
-          <div className="grid grid-cols-1 lg:grid-cols-2">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
+              <p className="text-xs text-gray-400 font-semibold mb-1">PENJUALAN (OMSET)</p>
+              <h3 className="text-xl font-bold text-blue-600">{formatIDR(periodData.revenue)}</h3>
+            </div>
             
-            {/* KOLOM KIRI: CAPEX */}
-            <div className="p-6 border-b lg:border-b-0 lg:border-r border-gray-100">
-              <div className="flex justify-between items-center mb-4">
-                 <h4 className="font-bold text-orange-600 flex items-center gap-2">
-                   1. CAPEX (Belanja Modal)
-                   <span className="text-[10px] bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-normal">Investasi Aset</span>
-                 </h4>
-                 <span className="font-bold text-gray-800">{formatIDR(data.totalCapex)}</span>
-              </div>
-              
-              <div className="space-y-2 pl-4 border-l-2 border-orange-100 max-h-48 overflow-y-auto custom-scrollbar pr-2">
-                {Object.keys(data.capexDetails).length === 0 ? (
-                  <p className="text-sm text-gray-400 italic">Tidak ada data CAPEX periode ini.</p>
-                ) : (
-                  Object.entries(data.capexDetails)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([name, val], idx) => (
-                    <div key={idx} className="flex justify-between text-sm items-center hover:bg-gray-50 p-1 rounded">
-                      <span className="text-gray-600 truncate w-2/3">{name}</span>
-                      <span className="font-medium text-gray-800">{formatIDR(val)}</span>
-                    </div>
-                  ))
-                )}
-              </div>
+            <div className="bg-white p-5 rounded-xl border border-red-100 shadow-sm bg-red-50/30">
+              <p className="text-xs text-red-400 font-semibold mb-1">(-) HPP</p>
+              <h3 className="text-xl font-bold text-red-600">{formatIDR(periodData.pl_hpp)}</h3>
+              <p className="text-[9px] text-gray-400 mt-1">Bahan Baku & Modal BB</p>
             </div>
 
-            {/* KOLOM KANAN: OPEX */}
-            <div className="p-6">
-               <div className="flex justify-between items-center mb-4">
-                 <h4 className="font-bold text-blue-600 flex items-center gap-2">
-                   2. OPEX (Biaya Operasional)
-                   <span className="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-normal">Pengurang Profit</span>
-                 </h4>
-                 <span className="font-bold text-gray-800">{formatIDR(data.totalOpex)}</span>
-              </div>
-
-              <div className="space-y-2 pl-4 border-l-2 border-blue-100 max-h-48 overflow-y-auto custom-scrollbar pr-2">
-                {Object.keys(data.opexDetails).length === 0 ? (
-                  <p className="text-sm text-gray-400 italic">Belum ada data OPEX periode ini.</p>
-                ) : (
-                  Object.entries(data.opexDetails)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([name, val], idx) => (
-                    <div key={idx} className="flex justify-between text-sm items-center hover:bg-gray-50 p-1 rounded">
-                      <span className="text-gray-600 truncate w-2/3">{name}</span>
-                      <span className="font-medium text-gray-800">{formatIDR(val)}</span>
-                    </div>
-                  ))
-                )}
-              </div>
+            <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 shadow-sm">
+              <p className="text-xs text-blue-600 font-semibold mb-1">LABA KOTOR</p>
+              <h3 className="text-xl font-bold text-blue-800">{formatIDR(periodData.grossProfit)}</h3>
+              <p className="text-[9px] text-blue-400 mt-1">Omset - HPP</p>
             </div>
 
+            <div className="bg-white p-5 rounded-xl border border-orange-100 shadow-sm bg-orange-50/30">
+              <p className="text-xs text-orange-400 font-semibold mb-1">(-) BIAYA OPEX</p>
+              <h3 className="text-xl font-bold text-orange-600">{formatIDR(periodData.pl_opex)}</h3>
+              <p className="text-[9px] text-gray-400 mt-1">Ops, Mkt, Gaji, R&D</p>
+            </div>
+
+            <div className={`p-5 rounded-xl border shadow-sm text-white ${periodData.netProfit >= 0 ? 'bg-gradient-to-br from-green-500 to-emerald-600 border-green-600' : 'bg-gradient-to-br from-red-500 to-red-600 border-red-600'}`}>
+              <p className="text-xs text-green-100 font-semibold mb-1">LABA BERSIH</p>
+              <h3 className="text-2xl font-bold">{formatIDR(periodData.netProfit)}</h3>
+              <p className="text-[9px] text-green-100 mt-1 opacity-80">Net Profit (Performance)</p>
+            </div>
           </div>
         </div>
 
-        {/* --- SECTION 3: TREND & CHANNEL --- */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
-              <div className="flex justify-between items-center mb-6">
-                <h4 className="font-bold text-gray-700">Trend Omset</h4>
-                <span className="text-[10px] bg-gray-100 px-2 py-1 rounded text-gray-500">
-                  {data.isMonthlyView ? 'Bulanan' : 'Harian'}
-                </span>
-              </div>
-              <div className="h-64">
-                <ResponsiveContainer>
-                  <AreaChart data={data.trendSeries}>
-                    <defs>
-                      <linearGradient id="colorOmset" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
-                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="name" fontSize={11} tickMargin={10} />
-                    <YAxis fontSize={11} tickFormatter={(val) => `${val/1000}k`} />
-                    <RechartsTooltip formatter={(val: any) => formatIDR(Number(val))} />
-                    <Area type="monotone" dataKey="value" stroke="#2563eb" fillOpacity={1} fill="url(#colorOmset)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-           </div>
+        {/* --- BAGIAN 2: LAPORAN ARUS KAS (CASHFLOW) --- */}
+        <div className="space-y-4 pt-4 border-t border-gray-200">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="p-1.5 bg-emerald-600 rounded text-white"><Banknote size={16}/></div>
+            <h2 className="text-lg font-bold text-gray-800">Laporan Arus Kas (Cashflow)</h2>
+          </div>
 
-           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-1">
-              <h4 className="font-bold text-gray-700 mb-2 text-center">Komposisi Penjualan</h4>
-              <div className="h-48 relative">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            
+            {/* CASH IN */}
+            <div className="bg-emerald-50 rounded-xl p-5 border border-emerald-100">
+              <h4 className="font-bold text-emerald-800 flex items-center gap-2 text-sm mb-3">
+                <ArrowUpRight size={16}/> UANG MASUK (CASH IN)
+              </h4>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Dari Penjualan</span>
+                  <span className="font-medium">{formatIDR(periodData.revenue)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Suntikan Modal</span>
+                  <span className="font-medium">{formatIDR(periodData.totalModalIn)}</span>
+                </div>
+                <div className="border-t border-emerald-200 pt-2 flex justify-between font-bold text-emerald-700">
+                  <span>TOTAL MASUK</span>
+                  <span>{formatIDR(periodData.cashIn)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* CASH OUT */}
+            <div className="bg-red-50 rounded-xl p-5 border border-red-100">
+              <h4 className="font-bold text-red-800 flex items-center gap-2 text-sm mb-3">
+                <ArrowDownRight size={16}/> UANG KELUAR (CASH OUT)
+              </h4>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">CAPEX (Modal Ops & BB)</span>
+                  <span className="font-medium">{formatIDR(periodData.cf_capex)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">OPEX (Lainnya)</span>
+                  <span className="font-medium">{formatIDR(periodData.cf_opex)}</span>
+                </div>
+                <div className="border-t border-red-200 pt-2 flex justify-between font-bold text-red-700">
+                  <span>TOTAL KELUAR</span>
+                  <span>{formatIDR(periodData.cashOut)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* NET CASHFLOW */}
+            <div className="bg-slate-800 text-white rounded-xl p-5 flex flex-col justify-center items-center text-center">
+              <p className="text-xs text-slate-400 font-semibold mb-2">NET CASHFLOW (PERIODE INI)</p>
+              <h3 className={`text-3xl font-bold ${periodData.netCashflow >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {formatIDR(periodData.netCashflow)}
+              </h3>
+              <p className="text-[10px] text-slate-500 mt-2">
+                Surplus / Defisit Kas Riil
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* --- BAGIAN 3: ANALYTICS CHARTS --- */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-4 border-t border-gray-200">
+          
+          {/* Chart Trend Omset */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
+            <h4 className="font-bold text-gray-700 mb-4 text-sm flex items-center gap-2">
+              <TrendingUp size={16}/> Trend Penjualan
+            </h4>
+            <div className="h-64">
+              <ResponsiveContainer>
+                <AreaChart data={periodData.trendSeries}>
+                  <defs>
+                    <linearGradient id="colorOmset" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
+                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" fontSize={11} tickMargin={10} />
+                  <YAxis fontSize={11} tickFormatter={(val) => `${val/1000}k`} />
+                  <RechartsTooltip formatter={(val: any) => formatIDR(Number(val))} />
+                  <Area type="monotone" dataKey="value" stroke="#3b82f6" fillOpacity={1} fill="url(#colorOmset)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Donut Chart: Online vs Offline */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h4 className="font-bold text-gray-700 mb-4 text-sm flex items-center gap-2">
+              <Store size={16}/> Komposisi Online vs Offline
+            </h4>
+            <div className="h-48 relative">
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie 
+                    data={[
+                      { name: 'Offline', value: periodData.omsetOffline },
+                      { name: 'Online', value: periodData.omsetOnline }
+                    ]} 
+                    cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={5} dataKey="value"
+                  >
+                    <Cell fill={COLOR_OFFLINE} />
+                    <Cell fill={COLOR_ONLINE} />
+                  </Pie>
+                  <RechartsTooltip formatter={(val: any) => formatIDR(Number(val))} />
+                  <Legend verticalAlign="bottom"/>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Pie Charts: CAPEX vs OPEX Anatomy */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h4 className="font-bold text-gray-700 mb-4 text-sm flex items-center gap-2">
+              <PieIcon size={16}/> Struktur Biaya (Cost Anatomy)
+            </h4>
+            <div className="grid grid-cols-2 gap-2">
+              {/* Capex Pie */}
+              <div className="h-48">
+                <p className="text-xs text-center text-gray-500 mb-2 font-semibold">CAPEX (Modal)</p>
                 <ResponsiveContainer>
                   <PieChart>
-                    <Pie 
-                      data={[
-                        { name: 'Offline', value: data.omsetOffline, color: COLOR_OFFLINE },
-                        { name: 'Online', value: data.omsetOnline, color: COLOR_ONLINE }
-                      ]} 
-                      cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={5} dataKey="value"
-                    >
-                      {[0, 1].map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={index === 0 ? COLOR_OFFLINE : COLOR_ONLINE} />
+                    <Pie data={periodData.capexSeries} cx="50%" cy="50%" innerRadius={0} outerRadius={50} dataKey="value">
+                      {periodData.capexSeries.map((entry: any, index: number) => (
+                        <Cell key={`cell-${index}`} fill={COLORS_CHART[index % COLORS_CHART.length]} />
                       ))}
                     </Pie>
                     <RechartsTooltip formatter={(val: any) => formatIDR(Number(val))} />
-                    <Legend verticalAlign="bottom"/>
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-           </div>
+              {/* Opex Pie */}
+              <div className="h-48">
+                <p className="text-xs text-center text-gray-500 mb-2 font-semibold">OPEX (Operasional)</p>
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={periodData.opexSeries} cx="50%" cy="50%" innerRadius={0} outerRadius={50} dataKey="value">
+                      {periodData.opexSeries.map((entry: any, index: number) => (
+                        <Cell key={`cell-${index}`} fill={COLORS_CHART[(index + 2) % COLORS_CHART.length]} />
+                      ))}
+                    </Pie>
+                    <RechartsTooltip formatter={(val: any) => formatIDR(Number(val))} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
         </div>
 
-        {/* --- SECTION 4: INVESTMENT STATUS (LIFETIME) --- */}
-        <div className="bg-slate-900 rounded-xl p-8 text-white relative overflow-hidden">
+        {/* --- BAGIAN 4: INVESTMENT STATUS (LIFETIME BEP) --- */}
+        <div className="bg-slate-900 rounded-xl p-8 text-white relative overflow-hidden mt-6">
           <div className="absolute top-0 right-0 p-8 opacity-5"><Coins size={120}/></div>
           
-          <div className="flex items-center gap-3 mb-6 border-b border-slate-700 pb-4">
-             <div className="p-2 bg-yellow-500 rounded text-slate-900"><Wallet size={24}/></div>
-             <div>
-               <h2 className="text-xl font-bold text-white">Status Investasi & Balik Modal (BEP)</h2>
-               <p className="text-sm text-slate-400">Tracker akumulasi (Sejak Awal Berdiri - Lifetime)</p>
+          <div className="flex items-center justify-between mb-6 border-b border-slate-700 pb-4">
+             <div className="flex items-center gap-3">
+               <div className="p-2 bg-yellow-500 rounded text-slate-900"><Wallet size={24}/></div>
+               <div>
+                 <h2 className="text-xl font-bold text-white">Status Investasi & BEP</h2>
+                 <p className="text-sm text-slate-400">Balik Modal Tracker (Lifetime)</p>
+               </div>
+             </div>
+             <div className={`px-4 py-2 rounded font-bold text-sm ${lifetimeData.isBEP ? 'bg-green-500' : 'bg-red-500/20 border border-red-500 text-red-200'}`}>
+               {lifetimeData.isBEP ? "SUDAH BALIK MODAL" : "BELUM BALIK MODAL"}
              </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-4">
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-widest mb-1">Total Modal Disetor</p>
-              <p className="text-3xl font-bold text-white">{formatIDR(bepData.totalModalDisetor)}</p>
-              <p className="text-[10px] text-slate-500 mt-1">Sumber: DB_MODAL</p>
+              <p className="text-3xl font-bold text-white">{formatIDR(lifetimeData.totalModal)}</p>
             </div>
-            
-            {/* INDIKATOR BARU: TOTAL LIFETIME EXPENSE */}
-            <div className="relative group">
-               <div className="absolute -left-2 top-0 h-full w-1 bg-slate-700 rounded-full"></div>
-               <p className="text-xs text-slate-400 uppercase tracking-widest mb-1">Total Uang Keluar (Lifetime)</p>
-               <p className="text-3xl font-bold text-red-300">{formatIDR(bepData.lifetimeGrandTotalBiaya)}</p>
-               <p className="text-[10px] text-slate-500 mt-1">Capex + Opex (Cek Google Sheets)</p>
-            </div>
-
             <div>
-              <p className="text-xs text-slate-400 uppercase tracking-widest mb-1">Profit Ops. Terkumpul</p>
-              <p className={`text-3xl font-bold ${bepData.lifetimeProfitOps >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {formatIDR(bepData.lifetimeProfitOps)}
+              <p className="text-xs text-slate-400 uppercase tracking-widest mb-1">Profit Bersih Terkumpul</p>
+              <p className={`text-3xl font-bold ${lifetimeData.lifetimeNetProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {formatIDR(lifetimeData.lifetimeNetProfit)}
               </p>
-              <p className="text-[10px] text-slate-500 mt-1">(Omset Lifetime - Opex Lifetime)</p>
+              <p className="text-[10px] text-slate-500 mt-1">Rumus: Rev(Life) - HPP(Life) - OPEX(Life)</p>
             </div>
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-widest mb-1">
-                {bepData.sisaModalBelumKembali <= 0 ? "Surplus (Keuntungan)" : "Sisa Modal Belum Kembali"}
+                {lifetimeData.sisaModal <= 0 ? "Surplus Profit" : "Sisa Modal Belum Kembali"}
               </p>
               <p className="text-3xl font-bold text-yellow-400">
-                {formatIDR(Math.abs(bepData.sisaModalBelumKembali))}
+                {formatIDR(Math.abs(lifetimeData.sisaModal))}
               </p>
-              <p className="text-[10px] text-slate-500 mt-1">Target Profit yg harus dikejar</p>
             </div>
           </div>
 
-          <div className="bg-slate-800 rounded-lg p-4 text-xs text-slate-300 space-y-4 border border-slate-700">
-            <p className="font-semibold text-white mb-2 flex items-center gap-2">
-              <Info size={14}/> Detail Perhitungan Real-Time:
-            </p>
-            <ul className="list-disc pl-4 space-y-3">
-              <li>
-                <strong>Profit Operasional Terkumpul:</strong>
-                <div className="ml-1 mt-1 text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-600/50 font-mono">
-                   {formatIDR(bepData.lifetimeOmset)} (Omset) - {formatIDR(bepData.lifetimeOpex)} (Opex) 
-                   = <span className="text-white font-bold">{formatIDR(bepData.lifetimeProfitOps)}</span>
-                </div>
-              </li>
-              <li>
-                <strong>Sisa Modal:</strong> 
-                <div className="ml-1 mt-1 text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-600/50 font-mono">
-                  {formatIDR(bepData.totalModalDisetor)} (Modal) - {formatIDR(bepData.lifetimeProfitOps)} (Profit)
-                  = <span className="text-yellow-400 font-bold">{formatIDR(bepData.sisaModalBelumKembali)}</span>
-                </div>
-              </li>
-            </ul>
+          {/* Progress Bar BEP */}
+          <div className="mt-4">
+            <div className="flex justify-between text-xs mb-2">
+              <span className="text-slate-300">Progress Balik Modal</span>
+              <span className="font-bold text-yellow-400">{lifetimeData.progressBEP.toFixed(1)}%</span>
+            </div>
+            <div className="w-full bg-slate-700 rounded-full h-4 overflow-hidden">
+              <div 
+                className={`h-4 rounded-full transition-all duration-1000 ${lifetimeData.isBEP ? 'bg-green-500' : 'bg-yellow-500'}`}
+                style={{ width: `${Math.min(lifetimeData.progressBEP, 100)}%` }}
+              ></div>
+            </div>
           </div>
         </div>
 
