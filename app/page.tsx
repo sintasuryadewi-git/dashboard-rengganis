@@ -6,7 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, 
   PieChart, Pie, Cell, AreaChart, Area 
 } from 'recharts';
-import { ArrowUpRight, ArrowDownRight, Wallet, TrendingUp, ShoppingBag, AlertCircle, Calendar, Store, Smartphone } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Wallet, TrendingUp, ShoppingBag, AlertCircle, Calendar } from 'lucide-react';
 import { 
   format, startOfMonth, endOfMonth, isWithinInterval, parse, 
   subDays, differenceInDays, startOfDay, endOfDay, eachMonthOfInterval, subMonths 
@@ -46,21 +46,38 @@ export default function Dashboard() {
   const [endDate, setEndDate] = useState<Date>(endOfDay(new Date()));
   const [selectedMonth, setSelectedMonth] = useState<string>(""); 
 
-  // --- Helper Functions ---
-  const parseDate = (dateStr: string) => {
+  // --- Helper Functions (CRITICAL UPDATES) ---
+  
+  // 1. Parse Tanggal (Support Indo & US)
+  const parseDate = (dateStr: string, formatStr: string) => {
     if (!dateStr) return new Date();
     try {
-      const parsedIndo = parse(dateStr, 'dd/MM/yyyy', new Date());
-      if (!isNaN(parsedIndo.getTime())) return parsedIndo;
+      const parsed = parse(dateStr, formatStr, new Date());
+      if (!isNaN(parsed.getTime())) return parsed;
+      
+      // Fallback
       const parsedMachine = new Date(dateStr);
       if (!isNaN(parsedMachine.getTime())) return parsedMachine;
+      
       return new Date(); 
     } catch { return new Date(); }
   };
 
+  // 2. Parse Rupiah (FIX FORMAT: 141.000,00)
   const parseRupiah = (val: string) => {
     if (!val) return 0;
-    return parseInt(val.toString().replace(/[^0-9]/g, ''), 10) || 0;
+    let str = val.toString();
+    
+    // Hapus titik (pemisah ribuan) -> "141000,00"
+    str = str.replace(/\./g, '');
+    
+    // Ambil angka SEBELUM koma saja -> "141000"
+    str = str.split(',')[0];
+    
+    // Hapus karakter aneh sisa (misal "Rp" atau spasi)
+    str = str.replace(/[^0-9]/g, '');
+    
+    return parseInt(str, 10) || 0;
   };
 
   const formatIDR = (num: number) => {
@@ -88,15 +105,18 @@ export default function Dashboard() {
 
   // --- 2. Filter & Process Data ---
   const filteredData = useMemo(() => {
+    
+    // A. Filter OMSET (dd/MM/yyyy)
     const omset = rawOmset.filter(item => {
       if (!item.Tanggal) return false;
-      const d = parseDate(item.Tanggal);
+      const d = parseDate(item.Tanggal, 'dd/MM/yyyy'); 
       return isWithinInterval(d, { start: startOfDay(startDate), end: endOfDay(endDate) });
     });
 
+    // B. Filter BIAYA (MM/dd/yyyy)
     const biaya = rawBiaya.filter(item => {
       if (!item.Tanggal) return false;
-      const d = parseDate(item.Tanggal);
+      const d = parseDate(item.Tanggal, 'M/d/yyyy'); 
       return isWithinInterval(d, { start: startOfDay(startDate), end: endOfDay(endDate) });
     });
 
@@ -117,12 +137,11 @@ export default function Dashboard() {
 
     const totalBiaya = biaya.reduce((acc, curr) => acc + parseRupiah(curr.Nominal_Biaya), 0);
 
-    // Hitung Trend vs Periode Sebelumnya
     const diffDays = differenceInDays(endDate, startDate) + 1;
     const prevStart = subDays(startDate, diffDays);
     const prevEnd = subDays(endDate, diffDays);
     const prevOmset = rawOmset
-      .filter(item => item.Tanggal && isWithinInterval(parseDate(item.Tanggal), { start: startOfDay(prevStart), end: endOfDay(prevEnd) }))
+      .filter(item => item.Tanggal && isWithinInterval(parseDate(item.Tanggal, 'dd/MM/yyyy'), { start: startOfDay(prevStart), end: endOfDay(prevEnd) }))
       .reduce((acc, curr) => acc + parseRupiah(curr.Nominal_Omset), 0);
 
     return { omset, biaya, totalOmset, omsetOnline, omsetOffline, totalBiaya, prevOmset };
@@ -143,12 +162,12 @@ export default function Dashboard() {
 
   // --- 3. Prepare Chart Data ---
   const chartData = useMemo(() => {
-    // A. Trend Time Series
     const diffDays = differenceInDays(endDate, startDate);
     const isMonthlyView = diffDays > 60; 
 
+    // Chart Trend
     const trendMap = filteredData.omset.reduce((acc: any, curr) => {
-      const d = parseDate(curr.Tanggal);
+      const d = parseDate(curr.Tanggal, 'dd/MM/yyyy');
       const key = isMonthlyView ? format(d, 'MMM yyyy', { locale: id }) : format(d, 'dd MMM', { locale: id });
       const sortKey = isMonthlyView ? startOfMonth(d).getTime() : startOfDay(d).getTime();
       
@@ -161,13 +180,11 @@ export default function Dashboard() {
 
     const trendSeries = Object.values(trendMap).sort((a: any, b: any) => a.sortKey - b.sortKey);
 
-    // B. Online vs Offline
     const dataOnlineVsOffline = [
       { name: 'Offline (Kedai)', value: filteredData.omsetOffline, color: COLOR_OFFLINE },
       { name: 'Online (Apps)', value: filteredData.omsetOnline, color: COLOR_ONLINE }
     ];
 
-    // C. Detail Channel
     const chMap = filteredData.omset.reduce((acc: any, curr) => {
       const k = curr.Channel_Penjualan || 'Lainnya';
       acc[k] = (acc[k] || 0) + parseRupiah(curr.Nominal_Omset);
@@ -175,7 +192,6 @@ export default function Dashboard() {
     }, {});
     const channel = Object.keys(chMap).map(k => ({ name: k, value: chMap[k] }));
 
-    // D. Cost Anatomy
     const costMap = filteredData.biaya.reduce((acc: any, curr) => {
       const k = curr.Kategori_Biaya || 'Umum';
       acc[k] = (acc[k] || 0) + parseRupiah(curr.Nominal_Biaya);
@@ -204,7 +220,7 @@ export default function Dashboard() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* 1. Dropdown Bulan */}
+            {/* Dropdown Bulan */}
             <div className="relative">
               <select value={selectedMonth} onChange={handleMonthChange} className="appearance-none bg-gray-50 border border-gray-200 text-gray-700 py-2 pl-4 pr-8 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
                 <option value="">Pilih Bulan...</option>
@@ -219,7 +235,7 @@ export default function Dashboard() {
 
             <span className="text-gray-300">|</span>
 
-            {/* 2. Custom Date Range (INI YANG MENGONTROL CHART TREND) */}
+            {/* Custom Date Range */}
             <div className="flex items-center gap-2 bg-gray-50 p-1 px-3 rounded-lg border border-gray-200">
               <span className="text-xs text-gray-400">Dari:</span>
               <input type="date" value={format(startDate, 'yyyy-MM-dd')} onChange={(e) => { setStartDate(new Date(e.target.value)); setSelectedMonth(""); }} className="bg-transparent text-sm text-gray-700 focus:outline-none" />
@@ -229,7 +245,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* --- ROW 1: 3 KARTU KPI UTAMA --- */}
+        {/* --- KPI CARDS --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <div className="flex justify-between mb-2">
@@ -267,12 +283,11 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* --- ROW 2: CHART TREND OMSET --- */}
+        {/* --- CHART TREND OMSET --- */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-2">
              <div>
                <h4 className="font-bold text-gray-800">Trend Pertumbuhan Omset</h4>
-               {/* JUDUL DINAMIS SESUAI TANGGAL PILIHAN */}
                <p className="text-sm text-gray-500">
                  Periode: {format(startDate, 'dd MMM yyyy', { locale: id })} - {format(endDate, 'dd MMM yyyy', { locale: id })}
                </p>
@@ -300,7 +315,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* --- ROW 3: ANALISA PENJUALAN --- */}
+        {/* --- ANALISA PENJUALAN --- */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-1">
             <h4 className="font-bold text-gray-700 mb-4 text-center">Komposisi Penjualan</h4>
@@ -339,14 +354,21 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* --- ROW 4: COST ANATOMY --- */}
+        {/* --- COST ANATOMY --- */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <h4 className="font-bold text-gray-700 mb-6">Cost Anatomy (Pengeluaran Terbesar)</h4>
             <div className="h-64 md:h-80 w-full">
               <ResponsiveContainer>
                 <PieChart>
-                  <Pie data={chartData.cost} cx="50%" cy="50%" innerRadius={0} outerRadius={100} label={({ name, percent }: any) => `${name} ${(percent ? percent * 100 : 0).toFixed(0)}%`}
-        dataKey="value">
+                  <Pie 
+                    data={chartData.cost} 
+                    cx="50%" 
+                    cy="50%" 
+                    innerRadius={0} 
+                    outerRadius={100} 
+                    label={({name, percent}: any) => `${name} ${(percent ? percent * 100 : 0).toFixed(0)}%`}
+                    dataKey="value"
+                  >
                     {chartData.cost.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS_COST[index % COLORS_COST.length]} />
                     ))}
